@@ -2,6 +2,7 @@ import * as anchor from "@project-serum/anchor";
 import { Program } from "@project-serum/anchor";
 import { SolanaTwitter } from "../target/types/solana_twitter";
 import * as assert from "assert";
+import * as bs58 from "bs58";
 
 describe("solana-twitter", () => {
   // Configure the client to use the local cluster.
@@ -62,13 +63,13 @@ describe("solana-twitter", () => {
     await program.provider.connection.confirmTransaction(signature);
 
     await program.methods.sendTweet('veganism', 'Yay Tofu!')
-      .accounts({
-        tweet: tweet.publicKey,
-        author: otherUser.publicKey,
-        systemProgram: anchor.web3.SystemProgram.programId,
-      })
-      .signers([otherUser, tweet])
-      .rpc();
+    .accounts({
+      tweet: tweet.publicKey,
+      author: otherUser.publicKey,
+      systemProgram: anchor.web3.SystemProgram.programId,
+    })
+    .signers([otherUser, tweet])
+    .rpc();
 
     // Fetch the account details of the created tweet.
     const tweetAccount = await program.account.tweet.fetch(tweet.publicKey);
@@ -86,13 +87,13 @@ describe("solana-twitter", () => {
 
     try {
       await program.methods.sendTweet(topicWith51Chars, 'Yay Tofu!')
-        .accounts({
-          tweet: tweet.publicKey,
-          author: provider.wallet.publicKey,
-          systemProgram: anchor.web3.SystemProgram.programId,
-        })
-        .signers([tweet])
-        .rpc();
+      .accounts({
+        tweet: tweet.publicKey,
+        author: provider.wallet.publicKey,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      })
+      .signers([tweet])
+      .rpc();
     } catch (error) {
       assert.equal(error.error.errorMessage, 'The provided topic should be 50 characters long maximum.');
       return;
@@ -107,18 +108,59 @@ describe("solana-twitter", () => {
 
     try {
       await program.methods.sendTweet('vegainsm', contentWith281Chars)
-        .accounts({
-          tweet: tweet.publicKey,
-          author: provider.wallet.publicKey,
-          systemProgram: anchor.web3.SystemProgram.programId,
-        })
-        .signers([tweet])
-        .rpc();
+      .accounts({
+        tweet: tweet.publicKey,
+        author: provider.wallet.publicKey,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      })
+      .signers([tweet])
+      .rpc();
     } catch (error) {
       assert.equal(error.error.errorMessage, 'The provided content should be 280 characters long maximum.');
       return;
     }
 
     assert.fail('The instruction should have failed with a 281-character content.');
+  });
+
+  it('can fetch all tweets', async () => {
+    const tweetAccounts = await program.account.tweet.all();
+    assert.equal(tweetAccounts.length, 3);
+  });
+
+  it('can filter tweets by author', async () => {
+    const authorPublicKey = provider.wallet.publicKey
+    const tweetAccounts = await program.account.tweet.all([
+      {
+        memcmp: {
+          offset: 8, // Discriminator.
+            bytes: authorPublicKey.toBase58(),
+        }
+      }
+    ]);
+
+    assert.equal(tweetAccounts.length, 2);
+    assert.ok(tweetAccounts.every(tweetAccount => {
+      return tweetAccount.account.author.toBase58() === authorPublicKey.toBase58()
+    }))
+  });
+
+  it('can filter tweets by topics', async () => {
+    const tweetAccounts = await program.account.tweet.all([
+      {
+        memcmp: {
+          offset: 8 + // Discriminator.
+            32 + // Author public key.
+            8 + // Timestamp.
+            4, // Topic string prefix.
+            bytes: bs58.encode(Buffer.from('veganism')),
+        }
+      }
+    ]);
+
+    assert.equal(tweetAccounts.length, 2);
+    assert.ok(tweetAccounts.every(tweetAccount => {
+      return tweetAccount.account.topic === 'veganism'
+    }))
   });
 });
